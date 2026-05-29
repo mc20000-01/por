@@ -1,15 +1,44 @@
 class PORAdvancedSyncExtension {
+    constructor() {
+        // Treat this like your terminal's path. Starts at root (/home/sandisk/POR)
+        this.cwd = "";
+    }
+
     getInfo() {
         return {
-            id: "porsync",
-            name: "POR Smarter Sync",
+            id: "poradvsync",
+            name: "POR Smart Studio",
             color1: "#0366d6",
             color2: "#005cc5",
             blocks: [
+                // --- DIRECTORY MANAGEMENT (Terminal-like) ---
+                {
+                    opcode: "setCwd",
+                    blockType: Scratch.BlockType.COMMAND,
+                    text: "cd into directory [DIR]",
+                    arguments: {
+                        DIR: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "apps/subsystem_1",
+                        },
+                    },
+                },
+                {
+                    opcode: "getCwd",
+                    blockType: Scratch.BlockType.REPORTER,
+                    text: "pwd (current working dir)",
+                },
+                {
+                    opcode: "listDirectory",
+                    blockType: Scratch.BlockType.REPORTER,
+                    text: "ls (files in current dir)",
+                },
+                "---",
+                // --- STANDARD SAVING ---
                 {
                     opcode: "stageTextFile",
                     blockType: Scratch.BlockType.COMMAND,
-                    text: "stage plain text [CONTENT] to file [FILE]",
+                    text: "stage text [CONTENT] to [FILE]",
                     arguments: {
                         CONTENT: {
                             type: Scratch.ArgumentType.STRING,
@@ -17,89 +46,123 @@ class PORAdvancedSyncExtension {
                         },
                         FILE: {
                             type: Scratch.ArgumentType.STRING,
-                            defaultValue: "sys/data.json",
+                            defaultValue: "data.json",
+                        },
+                    },
+                },
+                "---",
+                // --- VM EXPORTING MAGIC ---
+                {
+                    opcode: "exportProject",
+                    blockType: Scratch.BlockType.COMMAND,
+                    text: "export entire project to [FILE]",
+                    arguments: {
+                        FILE: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "build.pms",
                         },
                     },
                 },
                 {
-                    opcode: "stageURLFile",
+                    opcode: "exportSprite",
                     blockType: Scratch.BlockType.COMMAND,
-                    text: "stage data URL [CONTENT] to file [FILE]",
+                    text: "export sprite [TARGET] to [FILE]",
                     arguments: {
-                        CONTENT: {
+                        TARGET: {
                             type: Scratch.ArgumentType.STRING,
-                            defaultValue: "data:application/zip;base64,...",
+                            menu: "targets",
                         },
                         FILE: {
                             type: Scratch.ArgumentType.STRING,
-                            defaultValue: "sys/load.pms",
+                            defaultValue: "entity.sprite3",
                         },
                     },
                 },
+                {
+                    opcode: "exportCostume",
+                    blockType: Scratch.BlockType.COMMAND,
+                    text:
+                        "export costume [COSTUME] of sprite [TARGET] to [FILE]",
+                    arguments: {
+                        COSTUME: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "costume1",
+                        },
+                        TARGET: {
+                            type: Scratch.ArgumentType.STRING,
+                            menu: "targets",
+                        },
+                        FILE: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "texture.png",
+                        },
+                    },
+                },
+                "---",
                 {
                     opcode: "pushAllChanges",
                     blockType: Scratch.BlockType.COMMAND,
-                    text: "push batch with message [MSG]",
+                    text: "git push batch with message [MSG]",
                     arguments: {
                         MSG: {
                             type: Scratch.ArgumentType.STRING,
-                            defaultValue: "Subsystem sync",
+                            defaultValue: "App export sync",
                         },
                     },
-                },
-                "---",
-                {
-                    opcode: "needsUpdateText",
-                    blockType: Scratch.BlockType.BOOLEAN,
-                    text: "does text [CONTENT] differ from [FILE]?",
-                    arguments: {
-                        CONTENT: {
-                            type: Scratch.ArgumentType.STRING,
-                            defaultValue: "{}",
-                        },
-                        FILE: {
-                            type: Scratch.ArgumentType.STRING,
-                            defaultValue: "sys/data.json",
-                        },
-                    },
-                },
-                {
-                    opcode: "needsUpdateURL",
-                    blockType: Scratch.BlockType.BOOLEAN,
-                    text: "does data URL [CONTENT] differ from [FILE]?",
-                    arguments: {
-                        CONTENT: {
-                            type: Scratch.ArgumentType.STRING,
-                            defaultValue: "data:application/zip;base64,...",
-                        },
-                        FILE: {
-                            type: Scratch.ArgumentType.STRING,
-                            defaultValue: "sys/load.pms",
-                        },
-                    },
-                },
-                "---",
-                {
-                    opcode: "getGitChanges",
-                    blockType: Scratch.BlockType.REPORTER,
-                    text: "uncommitted changes",
-                },
-                {
-                    opcode: "isServerOnline",
-                    blockType: Scratch.BlockType.BOOLEAN,
-                    text: "server online?",
                 },
             ],
+            menus: {
+                targets: { acceptReporters: true, items: "_getTargets" },
+            },
         };
     }
 
-    // --- INTERNAL HELPER ---
+    // --- INTERNAL UTILITIES ---
+
+    // Appends the current working directory to the file name
+    _getPath(filename) {
+        if (this.cwd === "") return filename;
+        if (this.cwd.endsWith("/")) return this.cwd + filename;
+        return this.cwd + "/" + filename;
+    }
+
+    _blobToDataURI(blob) {
+        return new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(fr.result);
+            fr.onerror = () =>
+                reject(new Error(`FileReader error: ${fr.error}`));
+            fr.readAsDataURL(blob);
+        });
+    }
+
+    _getTargetFromMenu(targetName) {
+        if (targetName === "_myself_") {
+            const editingTarget = Scratch.vm.editingTarget;
+            return editingTarget ? editingTarget.sprite.clones[0] : null;
+        }
+        return Scratch.vm.runtime.getSpriteTargetByName(targetName);
+    }
+
+    _getTargets() {
+        const spriteNames = [];
+        if (Scratch.vm.editingTarget && !Scratch.vm.editingTarget.isStage) {
+            spriteNames.push({ text: "myself", value: "_myself_" });
+        }
+        const targets = Scratch.vm.runtime.targets;
+        for (let i = 1; i < targets.length; i++) {
+            if (targets[i].isOriginal) spriteNames.push(targets[i].getName());
+        }
+        return spriteNames.length > 0 ? spriteNames : [""];
+    }
+
     _stageFileHelper(file, content, dataType) {
+        const fullPath = this._getPath(file);
         return fetch("http://127.0.0.1:5000/check_diff", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                path: file,
+                path: fullPath,
                 content: content,
                 type: dataType,
             }),
@@ -107,46 +170,94 @@ class PORAdvancedSyncExtension {
             .then((res) => res.json())
             .then((diffData) => {
                 if (diffData.changed) {
-                    console.log(
-                        `Changes detected in ${file}, writing to disk...`,
-                    );
+                    console.log(`Writing to disk: ${fullPath}`);
                     return fetch("http://127.0.0.1:5000/save_file", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            path: file,
+                            path: fullPath,
                             content: content,
                             type: dataType,
                         }),
                     });
-                } else {
-                    console.log(`Skipped ${file}: Content is identical.`);
                 }
             })
             .catch((err) => console.error("Connection error:", err));
     }
 
-    _diffHelper(file, content, dataType) {
-        return fetch("http://127.0.0.1:5000/check_diff", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                path: file,
-                content: content,
-                type: dataType,
-            }),
-        })
-            .then((res) => res.json())
-            .then((data) => data.changed === true)
-            .catch(() => false);
+    // --- DIRECTORY COMMANDS ---
+
+    setCwd(args) {
+        // Cleans up the path slightly
+        let newDir = args.DIR.trim();
+        if (newDir === "/" || newDir === "\\" || newDir === "") {
+            this.cwd = "";
+        } else {
+            this.cwd = newDir;
+        }
     }
 
-    // --- COMMANDS ---
+    getCwd() {
+        return this.cwd === "" ? "/" : "/" + this.cwd;
+    }
+
+    listDirectory() {
+        return fetch("http://127.0.0.1:5000/list_dir", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: this.cwd }),
+        })
+            .then((res) => res.json())
+            .then((data) => {
+                if (data.files) return JSON.stringify(data.files);
+                return "[]";
+            })
+            .catch(() => "[]");
+    }
+
+    // --- SAVING AND EXPORTING COMMANDS ---
+
     stageTextFile(args) {
         return this._stageFileHelper(args.FILE, args.CONTENT, "text");
     }
-    stageURLFile(args) {
-        return this._stageFileHelper(args.FILE, args.CONTENT, "data_url");
+
+    exportProject(args) {
+        return Scratch.vm.saveProjectSb3()
+            .then((blob) => this._blobToDataURI(blob))
+            .then((dataUri) =>
+                this._stageFileHelper(args.FILE, dataUri, "data_url")
+            )
+            .catch((err) => console.error("Project export failed:", err));
+    }
+
+    exportSprite(args) {
+        const target = this._getTargetFromMenu(args.TARGET);
+        if (!target) {
+            console.error("Target not found!");
+            return;
+        }
+        return Scratch.vm.exportSprite(target.id)
+            .then((blob) => this._blobToDataURI(blob))
+            .then((dataUri) =>
+                this._stageFileHelper(args.FILE, dataUri, "data_url")
+            )
+            .catch((err) => console.error("Sprite export failed:", err));
+    }
+
+    exportCostume(args) {
+        const target = this._getTargetFromMenu(args.TARGET);
+        if (!target) return;
+
+        const costumeIndex = target.getCostumeIndexByName(args.COSTUME);
+        if (costumeIndex < 0) {
+            console.error("Costume not found!");
+            return;
+        }
+
+        // Scratch costumes already have an internal Data URI encoder!
+        const costume = target.sprite.costumes[costumeIndex];
+        const dataUri = costume.asset.encodeDataURI();
+        return this._stageFileHelper(args.FILE, dataUri, "data_url");
     }
 
     pushAllChanges(args) {
@@ -159,28 +270,7 @@ class PORAdvancedSyncExtension {
             .then((data) => console.log(data.message || data.error))
             .catch((err) => console.error("Connection error:", err));
     }
-
-    // --- REPORTERS ---
-    needsUpdateText(args) {
-        return this._diffHelper(args.FILE, args.CONTENT, "text");
-    }
-    needsUpdateURL(args) {
-        return this._diffHelper(args.FILE, args.CONTENT, "data_url");
-    }
-
-    getGitChanges() {
-        return fetch("http://127.0.0.1:5000/git_status")
-            .then((res) => res.json())
-            .then((data) => data.output || "Error reading git")
-            .catch(() => "Server offline");
-    }
-
-    isServerOnline() {
-        return fetch("http://127.0.0.1:5000/ping")
-            .then((res) => res.json())
-            .then((data) => data.status === "online")
-            .catch(() => false);
-    }
 }
 
 Scratch.extensions.register(new PORAdvancedSyncExtension());
+
