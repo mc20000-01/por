@@ -3,21 +3,36 @@ class PORAdvancedSyncExtension {
         return {
             id: "porsync",
             name: "POR Smart Sync",
-            color1: "#0366d6", // GitHub Blue
+            color1: "#0366d6",
             color2: "#005cc5",
             blocks: [
                 {
-                    opcode: "smartStageFile",
+                    opcode: "stageTextFile",
                     blockType: Scratch.BlockType.COMMAND,
-                    text: "smart stage [FILE] with data [CONTENT]",
+                    text: "stage plain text [CONTENT] to file [FILE]",
                     arguments: {
+                        CONTENT: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: '{"status": "ok"}',
+                        },
                         FILE: {
                             type: Scratch.ArgumentType.STRING,
                             defaultValue: "sys/data.json",
                         },
+                    },
+                },
+                {
+                    opcode: "stageURLFile",
+                    blockType: Scratch.BlockType.COMMAND,
+                    text: "stage data URL [CONTENT] to file [FILE]",
+                    arguments: {
                         CONTENT: {
                             type: Scratch.ArgumentType.STRING,
-                            defaultValue: "{}",
+                            defaultValue: "data:application/zip;base64,...",
+                        },
+                        FILE: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "sys/load.pms",
                         },
                     },
                 },
@@ -32,25 +47,41 @@ class PORAdvancedSyncExtension {
                         },
                     },
                 },
-                "---", // Adds a nice divider line in the block menu
+                "---",
                 {
-                    opcode: "needsUpdate",
-                    blockType: Scratch.BlockType.BOOLEAN, // Hexagonal block
-                    text: "does [FILE] differ from [CONTENT]?",
+                    opcode: "needsUpdateText",
+                    blockType: Scratch.BlockType.BOOLEAN,
+                    text: "does text [CONTENT] differ from [FILE]?",
                     arguments: {
-                        FILE: {
-                            type: Scratch.ArgumentType.STRING,
-                            defaultValue: "sys/data.json",
-                        },
                         CONTENT: {
                             type: Scratch.ArgumentType.STRING,
                             defaultValue: "{}",
                         },
+                        FILE: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "sys/data.json",
+                        },
                     },
                 },
                 {
+                    opcode: "needsUpdateURL",
+                    blockType: Scratch.BlockType.BOOLEAN,
+                    text: "does data URL [CONTENT] differ from [FILE]?",
+                    arguments: {
+                        CONTENT: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "data:application/zip;base64,...",
+                        },
+                        FILE: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "sys/load.pms",
+                        },
+                    },
+                },
+                "---",
+                {
                     opcode: "getGitChanges",
-                    blockType: Scratch.BlockType.REPORTER, // Rounded block
+                    blockType: Scratch.BlockType.REPORTER,
                     text: "uncommitted changes",
                 },
                 {
@@ -62,35 +93,60 @@ class PORAdvancedSyncExtension {
         };
     }
 
-    // --- COMMANDS ---
-
-    smartStageFile(args) {
-        // First, check if the file actually needs to be updated
+    // --- INTERNAL HELPER ---
+    _stageFileHelper(file, content, dataType) {
         return fetch("http://127.0.0.1:5000/check_diff", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path: args.FILE, content: args.CONTENT }),
+            body: JSON.stringify({
+                path: file,
+                content: content,
+                type: dataType,
+            }),
         })
             .then((res) => res.json())
             .then((diffData) => {
                 if (diffData.changed) {
-                    // Only save if the diff is true
                     console.log(
-                        `Changes detected in ${args.FILE}, writing to disk...`,
+                        `Changes detected in ${file}, writing to disk...`,
                     );
                     return fetch("http://127.0.0.1:5000/save_file", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            path: args.FILE,
-                            content: args.CONTENT,
+                            path: file,
+                            content: content,
+                            type: dataType,
                         }),
                     });
                 } else {
-                    console.log(`Skipped ${args.FILE}: Content is identical.`);
+                    console.log(`Skipped ${file}: Content is identical.`);
                 }
             })
             .catch((err) => console.error("Connection error:", err));
+    }
+
+    _diffHelper(file, content, dataType) {
+        return fetch("http://127.0.0.1:5000/check_diff", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                path: file,
+                content: content,
+                type: dataType,
+            }),
+        })
+            .then((res) => res.json())
+            .then((data) => data.changed === true)
+            .catch(() => false);
+    }
+
+    // --- COMMANDS ---
+    stageTextFile(args) {
+        return this._stageFileHelper(args.FILE, args.CONTENT, "text");
+    }
+    stageURLFile(args) {
+        return this._stageFileHelper(args.FILE, args.CONTENT, "data_url");
     }
 
     pushAllChanges(args) {
@@ -105,28 +161,17 @@ class PORAdvancedSyncExtension {
     }
 
     // --- REPORTERS ---
-
-    needsUpdate(args) {
-        return fetch("http://127.0.0.1:5000/check_diff", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path: args.FILE, content: args.CONTENT }),
-        })
-            .then((res) => res.json())
-            .then((data) => {
-                return data.changed === true;
-            })
-            .catch(() => {
-                return false; // Fail safe
-            });
+    needsUpdateText(args) {
+        return this._diffHelper(args.FILE, args.CONTENT, "text");
+    }
+    needsUpdateURL(args) {
+        return this._diffHelper(args.FILE, args.CONTENT, "data_url");
     }
 
     getGitChanges() {
         return fetch("http://127.0.0.1:5000/git_status")
             .then((res) => res.json())
-            .then((data) => {
-                return data.output || "Error reading git";
-            })
+            .then((data) => data.output || "Error reading git")
             .catch(() => "Server offline");
     }
 

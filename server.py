@@ -2,23 +2,21 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import subprocess
 import os
-import base64 # <-- NEW: Needed to decode binary files
+import base64
 
 app = Flask(__name__)
 CORS(app)
 
 REPO_PATH = "/home/sandisk/POR"
 
-def parse_content(content):
+def parse_content(content, data_type):
     """
-    Checks if the incoming content is a Base64 Data URL.
-    Returns (is_binary: bool, parsed_data: bytes or str)
+    Decodes the data ONLY if the extension explicitly says it's a data_url.
     """
-    if isinstance(content, str) and content.startswith('data:') and ';base64,' in content:
-        # Split off the 'data:application/...;base64,' part
+    if data_type == 'data_url' and isinstance(content, str) and ';base64,' in content:
         header, b64_data = content.split(';base64,', 1)
-        # Decode the remaining string back into raw binary bytes
         return True, base64.b64decode(b64_data)
+    # Treat everything else as raw text
     return False, content
 
 @app.route('/POR_Extension.js', methods=['GET'])
@@ -45,6 +43,7 @@ def check_diff():
     data = request.json
     file_path = data.get('path')
     content = data.get('content')
+    data_type = data.get('type', 'text')
 
     if not file_path or content is None:
         return jsonify({"error": "Missing data"}), 400
@@ -55,17 +54,21 @@ def check_diff():
         return jsonify({"changed": True})
 
     try:
-        # Check if incoming data is binary or text
-        is_binary, new_data = parse_content(content)
+        is_binary, new_data = parse_content(content, data_type)
         
-        # Read the local file in the correct mode to compare
-        read_mode = 'rb' if is_binary else 'r'
-        encoding = None if is_binary else 'utf-8'
-
-        with open(full_path, read_mode, encoding=encoding) as f:
-            local_data = f.read()
-        
-        return jsonify({"changed": local_data != new_data})
+        if is_binary:
+            with open(full_path, 'rb') as f:
+                local_data = f.read()
+            return jsonify({"changed": local_data != new_data})
+        else:
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    local_data = f.read()
+                return jsonify({"changed": local_data != new_data})
+            except UnicodeDecodeError:
+                # Safety: If we try to read a binary file as text, it's definitely different!
+                return jsonify({"changed": True})
+                
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -74,15 +77,15 @@ def save_file():
     data = request.json
     file_path = data.get('path')
     content = data.get('content')
+    data_type = data.get('type', 'text') # Get explicit type from block
+    
     full_path = os.path.join(REPO_PATH, file_path)
 
     try:
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         
-        # Check if incoming data is binary or text
-        is_binary, file_data = parse_content(content)
+        is_binary, file_data = parse_content(content, data_type)
         
-        # Write to disk in the correct mode
         write_mode = 'wb' if is_binary else 'w'
         encoding = None if is_binary else 'utf-8'
 
