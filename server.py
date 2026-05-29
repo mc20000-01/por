@@ -4,19 +4,15 @@ import subprocess
 import os
 
 app = Flask(__name__)
-# CORS allows your browser (PenguinMod) to talk to this local server
 CORS(app)
 
-# The path to your local repository
 REPO_PATH = "/home/sandisk/POR"
 
-@app.route('/update_file', methods=['POST'])
-def update_file():
-    # Get the data sent from the PenguinMod block
+@app.route('/save_file', methods=['POST'])
+def save_file():
     data = request.json
     file_path = data.get('path')
     content = data.get('content')
-    commit_message = data.get('message', 'Automated update from PenguinMod')
 
     if not file_path or content is None:
         return jsonify({"error": "Missing path or content"}), 400
@@ -24,26 +20,48 @@ def update_file():
     full_path = os.path.join(REPO_PATH, file_path)
 
     try:
-        # 1. Write the new data to the file
+        # Create nested folders automatically if a subsystem uses a path like 'subsystem_a/data.json'
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+
+        # Write the file locally without touching Git yet
         with open(full_path, 'w') as f:
             f.write(content)
-        print(f"Updated file: {full_path}")
+        
+        print(f"Saved locally: {file_path}")
+        return jsonify({"status": "success", "message": f"Staged {file_path} locally"})
 
-        # 2. Run the Git commands to stage, commit, and push
-        subprocess.run(['git', 'add', file_path], cwd=REPO_PATH, check=True)
+    except Exception as e:
+        print(f"Error saving file: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/commit_and_push', methods=['POST'])
+def commit_and_push():
+    data = request.json
+    commit_message = data.get('message', 'Batch update of subsystems from PenguinMod')
+
+    try:
+        # 1. Stage every new, modified, or deleted file in the repo folder
+        subprocess.run(['git', 'add', '.'], cwd=REPO_PATH, check=True)
+
+        # 2. Check if there are actual changes to prevent Git from throwing an error on empty commits
+        status_check = subprocess.run(['git', 'status', '--porcelain'], cwd=REPO_PATH, capture_output=True, text=True)
+        if not status_check.stdout.strip():
+            print("Commit skipped: No changes detected.")
+            return jsonify({"status": "success", "message": "No new changes found to commit."})
+
+        # 3. Commit and push the entire batch at once
         subprocess.run(['git', 'commit', '-m', commit_message], cwd=REPO_PATH, check=True)
         subprocess.run(['git', 'push'], cwd=REPO_PATH, check=True)
-        print("Successfully pushed to GitHub.")
-
-        return jsonify({"status": "success"})
+        
+        print("Batch sync successful!")
+        return jsonify({"status": "success", "message": "All modified files committed and pushed successfully."})
 
     except subprocess.CalledProcessError as e:
         print(f"Git Error: {e}")
-        return jsonify({"error": "Failed to push to Git"}), 500
+        return jsonify({"error": "Git batch operation failed"}), 500
     except Exception as e:
         print(f"Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # Runs the server on port 5000
     app.run(port=5000)
