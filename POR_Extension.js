@@ -2,7 +2,7 @@ class PORAdvancedSyncExtension {
     getInfo() {
         return {
             id: "porsync",
-            name: "POR Smart Sync",
+            name: "POR Smarter Sync",
             color1: "#0366d6",
             color2: "#005cc5",
             blocks: [
