@@ -2,27 +2,36 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import subprocess
 import os
+import base64 # <-- NEW: Needed to decode binary files
 
 app = Flask(__name__)
 CORS(app)
 
 REPO_PATH = "/home/sandisk/POR"
 
-# --- NEW: Serve the Extension JS directly ---
+def parse_content(content):
+    """
+    Checks if the incoming content is a Base64 Data URL.
+    Returns (is_binary: bool, parsed_data: bytes or str)
+    """
+    if isinstance(content, str) and content.startswith('data:') and ';base64,' in content:
+        # Split off the 'data:application/...;base64,' part
+        header, b64_data = content.split(';base64,', 1)
+        # Decode the remaining string back into raw binary bytes
+        return True, base64.b64decode(b64_data)
+    return False, content
+
 @app.route('/POR_Extension.js', methods=['GET'])
 def serve_extension():
     return send_from_directory(REPO_PATH, 'POR_Extension.js')
 
-# --- NEW: QoL Server Status ---
 @app.route('/ping', methods=['GET'])
 def ping():
     return jsonify({"status": "online"})
 
-# --- NEW: QoL Git Status ---
 @app.route('/git_status', methods=['GET'])
 def git_status():
     try:
-        # Returns a short list of changed files (e.g., " M data.json")
         result = subprocess.run(['git', 'status', '--porcelain'], cwd=REPO_PATH, capture_output=True, text=True)
         changes = result.stdout.strip()
         if not changes:
@@ -31,7 +40,6 @@ def git_status():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- NEW: QoL Diff Checker ---
 @app.route('/check_diff', methods=['POST'])
 def check_diff():
     data = request.json
@@ -43,20 +51,24 @@ def check_diff():
 
     full_path = os.path.join(REPO_PATH, file_path)
 
-    # If the file doesn't exist yet, it definitely needs an update
     if not os.path.exists(full_path):
         return jsonify({"changed": True})
 
     try:
-        with open(full_path, 'r') as f:
-            local_content = f.read()
+        # Check if incoming data is binary or text
+        is_binary, new_data = parse_content(content)
         
-        # Compare local file to the incoming Scratch data
-        return jsonify({"changed": local_content != content})
+        # Read the local file in the correct mode to compare
+        read_mode = 'rb' if is_binary else 'r'
+        encoding = None if is_binary else 'utf-8'
+
+        with open(full_path, read_mode, encoding=encoding) as f:
+            local_data = f.read()
+        
+        return jsonify({"changed": local_data != new_data})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- UPDATED: Save File (Now acts as the backend for Smart Stage) ---
 @app.route('/save_file', methods=['POST'])
 def save_file():
     data = request.json
@@ -66,13 +78,21 @@ def save_file():
 
     try:
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        with open(full_path, 'w') as f:
-            f.write(content)
+        
+        # Check if incoming data is binary or text
+        is_binary, file_data = parse_content(content)
+        
+        # Write to disk in the correct mode
+        write_mode = 'wb' if is_binary else 'w'
+        encoding = None if is_binary else 'utf-8'
+
+        with open(full_path, write_mode, encoding=encoding) as f:
+            f.write(file_data)
+            
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- UNCHANGED: Commit & Push ---
 @app.route('/commit_and_push', methods=['POST'])
 def commit_and_push():
     data = request.json
