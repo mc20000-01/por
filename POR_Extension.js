@@ -1,93 +1,141 @@
-class PORBatchSyncExtension {
+class PORAdvancedSyncExtension {
     getInfo() {
         return {
-            id: "porbatchsync",
-            name: "POR Subsystem Batch Sync",
-            color1: "#24292e",
-            color2: "#1b1f23",
+            id: "porsync",
+            name: "POR Smart Sync",
+            color1: "#0366d6", // GitHub Blue
+            color2: "#005cc5",
             blocks: [
                 {
-                    opcode: "stageFile",
+                    opcode: "smartStageFile",
                     blockType: Scratch.BlockType.COMMAND,
-                    text: "stage file [FILE] with data [CONTENT]",
+                    text: "smart stage [FILE] with data [CONTENT]",
                     arguments: {
                         FILE: {
                             type: Scratch.ArgumentType.STRING,
-                            defaultValue: "subsystem_one/config.json",
+                            defaultValue: "sys/data.json",
                         },
                         CONTENT: {
                             type: Scratch.ArgumentType.STRING,
-                            defaultValue: '{"status": "active"}',
+                            defaultValue: "{}",
                         },
                     },
                 },
                 {
                     opcode: "pushAllChanges",
                     blockType: Scratch.BlockType.COMMAND,
-                    text: "push all staged files with message [MSG]",
+                    text: "push batch with message [MSG]",
                     arguments: {
                         MSG: {
                             type: Scratch.ArgumentType.STRING,
-                            defaultValue: "Batch update of multiple subsystems",
+                            defaultValue: "Subsystem sync",
                         },
                     },
+                },
+                "---", // Adds a nice divider line in the block menu
+                {
+                    opcode: "needsUpdate",
+                    blockType: Scratch.BlockType.BOOLEAN, // Hexagonal block
+                    text: "does [FILE] differ from [CONTENT]?",
+                    arguments: {
+                        FILE: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "sys/data.json",
+                        },
+                        CONTENT: {
+                            type: Scratch.ArgumentType.STRING,
+                            defaultValue: "{}",
+                        },
+                    },
+                },
+                {
+                    opcode: "getGitChanges",
+                    blockType: Scratch.BlockType.REPORTER, // Rounded block
+                    text: "uncommitted changes",
+                },
+                {
+                    opcode: "isServerOnline",
+                    blockType: Scratch.BlockType.BOOLEAN,
+                    text: "server online?",
                 },
             ],
         };
     }
 
-    stageFile(args) {
-        return fetch("http://127.0.0.1:5000/save_file", {
+    // --- COMMANDS ---
+
+    smartStageFile(args) {
+        // First, check if the file actually needs to be updated
+        return fetch("http://127.0.0.1:5000/check_diff", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                path: args.FILE,
-                content: args.CONTENT,
-            }),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: args.FILE, content: args.CONTENT }),
         })
-            .then((response) => response.json())
-            .then((data) => {
-                if (data.status === "success") {
-                    console.log(data.message);
+            .then((res) => res.json())
+            .then((diffData) => {
+                if (diffData.changed) {
+                    // Only save if the diff is true
+                    console.log(
+                        `Changes detected in ${args.FILE}, writing to disk...`,
+                    );
+                    return fetch("http://127.0.0.1:5000/save_file", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            path: args.FILE,
+                            content: args.CONTENT,
+                        }),
+                    });
                 } else {
-                    console.error("Local save failed:", data.error);
+                    console.log(`Skipped ${args.FILE}: Content is identical.`);
                 }
             })
-            .catch((error) => {
-                console.error(
-                    "Could not connect to server. Is server.py running?",
-                    error,
-                );
-            });
+            .catch((err) => console.error("Connection error:", err));
     }
 
     pushAllChanges(args) {
         return fetch("http://127.0.0.1:5000/commit_and_push", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                message: args.MSG,
-            }),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: args.MSG }),
         })
-            .then((response) => response.json())
+            .then((res) => res.json())
+            .then((data) => console.log(data.message || data.error))
+            .catch((err) => console.error("Connection error:", err));
+    }
+
+    // --- REPORTERS ---
+
+    needsUpdate(args) {
+        return fetch("http://127.0.0.1:5000/check_diff", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: args.FILE, content: args.CONTENT }),
+        })
+            .then((res) => res.json())
             .then((data) => {
-                if (data.status === "success") {
-                    console.log(data.message);
-                } else {
-                    console.error("GitHub push failed:", data.error);
-                }
+                return data.changed === true;
             })
-            .catch((error) => {
-                console.error(
-                    "Could not connect to server. Is server.py running?",
-                    error,
-                );
+            .catch(() => {
+                return false; // Fail safe
             });
+    }
+
+    getGitChanges() {
+        return fetch("http://127.0.0.1:5000/git_status")
+            .then((res) => res.json())
+            .then((data) => {
+                return data.output || "Error reading git";
+            })
+            .catch(() => "Server offline");
+    }
+
+    isServerOnline() {
+        return fetch("http://127.0.0.1:5000/ping")
+            .then((res) => res.json())
+            .then((data) => data.status === "online")
+            .catch(() => false);
     }
 }
 
-Scratch.extensions.register(new PORBatchSyncExtension());
+Scratch.extensions.register(new PORAdvancedSyncExtension());
